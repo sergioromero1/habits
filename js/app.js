@@ -1,34 +1,41 @@
 /**
- * HabitSpark - Core Application Logic
+ * HabitSpark - Firebase Edition
  */
+
+// --- Firebase Config ---
+const firebaseConfig = {
+    apiKey: "AIzaSyBr1-ak7vkqeQ14tan9z27sys5CQztYTLs",
+    authDomain: "habit-tracker-a0513.firebaseapp.com",
+    projectId: "habit-tracker-a0513",
+    storageBucket: "habit-tracker-a0513.firebasestorage.app",
+    messagingSenderId: "332006691188",
+    appId: "1:332006691188:web:6c4363c01b1324d883dc21",
+    measurementId: "G-Y4NSKM7H6B"
+};
+
+// Initialize Firebase (Compat)
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
+const googleProvider = new firebase.auth.GoogleAuthProvider();
+
+// --- State Management ---
+let state = {
+    user: null, // Firebase User
+    view: 'daily',
+    habits: [], // Now loaded from Firestore
+    currentMonth: new Date(),
+    unsubscribeHabits: null // Listener cleanup
+};
+
+// --- DOM Elements ---
+let dom = {};
 
 document.addEventListener('DOMContentLoaded', () => {
     initApp();
 });
 
-// --- State Management ---
-let state = {
-    view: 'daily',
-    habits: [],
-    logs: {},
-    today: new Date().toISOString().split('T')[0]
-};
-
-// --- DOM Elements Container ---
-let dom = {};
-
 function initApp() {
-    // 1. Initialize State safely
-    try {
-        state.habits = JSON.parse(localStorage.getItem('habits')) || [];
-        state.logs = JSON.parse(localStorage.getItem('logs')) || {};
-    } catch (e) {
-        console.error("Error parsing LocalStorage", e);
-        state.habits = [];
-        state.logs = {};
-    }
-
-    // 2. Cache DOM Elements
     dom = {
         app: document.getElementById('app'),
         mainContent: document.getElementById('main-content'),
@@ -37,33 +44,205 @@ function initApp() {
         modalOverlay: document.getElementById('modal-overlay'),
         addHabitForm: document.getElementById('add-habit-form'),
         cancelModalBtn: document.getElementById('cancel-modal'),
-        themeToggle: document.getElementById('theme-toggle'),
+        loginBtn: document.getElementById('login-btn'),
+        userArea: document.getElementById('user-area'),
+        userProfile: document.getElementById('user-profile'),
+        userAvatar: document.getElementById('user-avatar'),
+        logoutBtn: document.getElementById('logout-btn'),
+        exportBtn: document.getElementById('export-btn'),
     };
 
-    // 3. Verify critical elements
-    if (!dom.addHabitForm) {
-        console.error("Critical: Form 'add-habit-form' not found!");
+    setupEventListeners();
+
+    // Auth Listener
+    auth.onAuthStateChanged(async (user) => {
+        state.user = user;
+        updateUserUI();
+
+        if (user) {
+            console.log("User logged in:", user.uid);
+            // Migrate local data if needed, then subscribe
+            await migrateUserInfo();
+            subscribeToHabits(user.uid);
+        } else {
+            console.log("No user logged in. Using offline mode (incomplete implementation for purely offline, asking for login).");
+            // For now, clear habits if logged out
+            state.habits = [];
+            if (state.unsubscribeHabits) state.unsubscribeHabits();
+
+            // Optionally: Load localstorage as fallback?
+            // To keep simple: "Login to sync". Or fallback to local if desired.
+            // Let's fallback to local just so app isn't empty on load for guests.
+            loadLocalHabits();
+            render();
+        }
+    });
+}
+
+// --- Data Layer (Firebase + Local Fallback) ---
+
+function subscribeToHabits(uid) {
+    if (state.unsubscribeHabits) state.unsubscribeHabits();
+
+    const habitsRef = db.collection('users').doc(uid).collection('habits');
+
+    state.unsubscribeHabits = habitsRef.onSnapshot((snapshot) => {
+        const habits = [];
+        snapshot.forEach(doc => {
+            habits.push({ id: doc.id, ...doc.data() });
+        });
+        state.habits = habits;
+        render();
+    }, (error) => {
+        console.error("Error fetching habits:", error);
+    });
+}
+
+function loadLocalHabits() {
+    try {
+        const localHabits = JSON.parse(localStorage.getItem('habits')) || [];
+        const localLogs = JSON.parse(localStorage.getItem('logs')) || {};
+
+        // Convert old structure to new unified structure for display compatibility
+        state.habits = localHabits.map(h => {
+            // Find completion dates for this habit
+            const completedDates = [];
+            Object.keys(localLogs).forEach(date => {
+                if (localLogs[date].includes(h.id)) completedDates.push(date);
+            });
+            return { ...h, completedDates };
+        });
+    } catch (e) {
+        console.error("Local load error", e);
+    }
+}
+
+async function migrateUserInfo() {
+    // One-time check: If user has 0 habits in cloud, upload local habits
+    const uid = state.user.uid;
+    const habitsRef = db.collection('users').doc(uid).collection('habits');
+    const snap = await habitsRef.get();
+
+    if (snap.empty) {
+        console.log("New cloud user, checking local data...");
+        const localHabits = JSON.parse(localStorage.getItem('habits')) || [];
+        const localLogs = JSON.parse(localStorage.getItem('logs')) || {};
+
+        if (localHabits.length > 0) {
+            if (confirm("¡Tienes datos locales! ¿Quieres subirlos a tu cuenta?")) {
+                const batch = db.batch();
+                localHabits.forEach(h => {
+                    const docRef = habitsRef.doc(h.id); // Use same ID or new
+                    const completedDates = [];
+                    Object.keys(localLogs).forEach(date => {
+                        if (localLogs[date].includes(h.id)) completedDates.push(date);
+                    });
+
+                    batch.set(docRef, {
+                        name: h.name,
+                        color: h.color,
+                        createdAt: h.createdAt || new Date().toISOString(),
+                        completedDates: completedDates
+                    });
+                });
+                await batch.commit();
+                console.log("Migration complete.");
+                // Optional: Clear local storage? localStorage.clear();
+            }
+        }
+    }
+}
+
+// --- Actions ---
+
+async function toggleHabit(habit) {
+    if (!state.user) {
+        alert("Inicia sesión para guardar tu progreso en la nube.");
+        return; // Or handle local toggle
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const isCompleted = habit.completedDates?.includes(today);
+
+    const habitRef = db.collection('users').doc(state.user.uid).collection('habits').doc(habit.id);
+
+    try {
+        if (isCompleted) {
+            await habitRef.update({
+                completedDates: firebase.firestore.FieldValue.arrayRemove(today)
+            });
+        } else {
+            await habitRef.update({
+                completedDates: firebase.firestore.FieldValue.arrayUnion(today)
+            });
+            triggerConfetti();
+        }
+    } catch (e) {
+        console.error("Error updating habit:", e);
+    }
+}
+
+async function addHabit(name, color) {
+    if (!state.user) {
+        alert("Debes iniciar sesión para crear hábitos.");
         return;
     }
 
-    // 4. Start
-    render();
-    setupEventListeners();
+    try {
+        await db.collection('users').doc(state.user.uid).collection('habits').add({
+            name,
+            color,
+            createdAt: new Date().toISOString(),
+            completedDates: []
+        });
+        closeModal();
+    } catch (e) {
+        console.error("Error adding habit:", e);
+    }
 }
 
-// --- Core Functions ---
+// --- Auth Actions ---
 
-function saveState() {
-    localStorage.setItem('habits', JSON.stringify(state.habits));
-    localStorage.setItem('logs', JSON.stringify(state.logs));
+function login() {
+    auth.signInWithPopup(googleProvider).catch((error) => {
+        console.error("Login failed:", error);
+        alert("Error al iniciar sesión: " + error.message);
+    });
 }
 
-function switchView(newView) {
-    state.view = newView;
-    render();
+function logout() {
+    auth.signOut();
 }
 
-// --- Rendering ---
+function exportData() {
+    if (state.habits.length === 0) {
+        alert("No hay datos para exportar.");
+        return;
+    }
+
+    const dataStr = JSON.stringify(state.habits, null, 2);
+    const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
+
+    const exportFileDefaultName = `habit-tracker-data-${new Date().toISOString().split('T')[0]}.json`;
+
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+}
+
+// --- UI Rendering ---
+
+function updateUserUI() {
+    if (state.user) {
+        dom.loginBtn.classList.add('hidden');
+        dom.userProfile.classList.remove('hidden');
+        dom.userAvatar.src = state.user.photoURL || 'https://via.placeholder.com/40';
+    } else {
+        dom.loginBtn.classList.remove('hidden');
+        dom.userProfile.classList.add('hidden');
+    }
+}
 
 function render() {
     // Update Nav
@@ -75,71 +254,57 @@ function render() {
         }
     });
 
-    // Render View Content
     dom.mainContent.innerHTML = '';
 
-    if (state.view === 'daily') {
-        renderDailyView();
-    } else if (state.view === 'calendar') {
-        renderCalendarView();
-    } else if (state.view === 'progress') {
-        renderProgressView();
-    }
+    if (state.view === 'daily') renderDailyView();
+    else if (state.view === 'calendar') renderCalendarView();
+    else if (state.view === 'progress') renderProgressView();
 }
 
 function renderDailyView() {
     const header = document.createElement('div');
     header.className = 'view-header';
-    header.innerHTML = `
-        <h2>Hoy, ${new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}</h2>
-        <p class="subtitle">¡Sigue con tu racha!</p>
-    `;
+    const todayStr = new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+    header.innerHTML = `<h2>Hoy, ${todayStr}</h2><p class="subtitle">¡Sigue con tu racha!</p>`;
     dom.mainContent.appendChild(header);
 
     const list = document.createElement('div');
     list.className = 'habit-list';
 
     if (state.habits.length === 0) {
-        const emptyState = document.createElement('div');
-        emptyState.className = 'empty-state';
-        emptyState.innerHTML = '<p>No tienes hábitos aún. ¡Crea el primero!</p>';
-        list.appendChild(emptyState);
+        list.innerHTML = `<div class="empty-state"><p>${state.user ? "¡Crea tu primer hábito!" : "Inicia sesión para ver tus hábitos"}</p></div>`;
     } else {
+        const today = new Date().toISOString().split('T')[0];
+
         state.habits.forEach(habit => {
-            const isCompleted = state.logs[state.today]?.includes(habit.id);
+            const isCompleted = habit.completedDates?.includes(today);
             const item = document.createElement('div');
             item.className = `habit-item ${isCompleted ? 'completed' : ''}`;
             item.style.setProperty('--habit-color', habit.color);
             item.innerHTML = `
-                <div class="habit-icon">
-                    ${isCompleted ? '✓' : ''}
-                </div>
+                <div class="habit-icon">${isCompleted ? '✓' : ''}</div>
                 <div class="habit-info">
                     <span class="habit-name">${habit.name}</span>
-                    <span class="habit-streak">🔥 ${calculateStreak(habit.id)} días</span>
+                    <span class="habit-streak">🔥 ${calculateStreak(habit)} días</span>
                 </div>
             `;
-            item.addEventListener('click', () => toggleHabit(habit.id));
+            item.addEventListener('click', () => toggleHabit(habit));
             list.appendChild(item);
         });
     }
-
     dom.mainContent.appendChild(list);
 }
 
 function renderCalendarView() {
     const calendarHeader = document.createElement('div');
     calendarHeader.className = 'view-header';
-    calendarHeader.innerHTML = `
-        <h2>Calendario</h2>
-        <p class="subtitle">Tu constancia mes a mes</p>
-    `;
+    calendarHeader.innerHTML = `<h2>Calendario</h2><p class="subtitle">Tu constancia mensual</p>`;
     dom.mainContent.appendChild(calendarHeader);
 
-    // Controls for Month Navigation
+    // Controls
     const controls = document.createElement('div');
     controls.className = 'calendar-controls';
-    const currentMonthDate = state.currentMonth || new Date();
+    const currentMonthDate = state.currentMonth;
     const monthName = currentMonthDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
 
     controls.innerHTML = `
@@ -149,209 +314,156 @@ function renderCalendarView() {
     `;
     dom.mainContent.appendChild(controls);
 
-    // Grid Container
+    // Grid
     const grid = document.createElement('div');
     grid.className = 'calendar-grid';
 
-    const days = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
-    days.forEach(day => {
-        const dayHeader = document.createElement('div');
-        dayHeader.className = 'day-header';
-        dayHeader.textContent = day;
-        grid.appendChild(dayHeader);
+    // Headers
+    ['L', 'M', 'M', 'J', 'V', 'S', 'D'].forEach(d => {
+        const h = document.createElement('div');
+        h.className = 'day-header';
+        h.textContent = d;
+        grid.appendChild(h);
     });
 
-    // Days Generation
+    // Days extraction
     const year = currentMonthDate.getFullYear();
     const month = currentMonthDate.getMonth();
-
-    const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0 is Sunday
-    const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+    const firstDay = new Date(year, month, 1).getDay();
+    const adjustedFirstDay = firstDay === 0 ? 6 : firstDay - 1;
     const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-    // Empty slots
+    // Empty cells
     for (let i = 0; i < adjustedFirstDay; i++) {
-        const empty = document.createElement('div');
-        empty.className = 'day-cell empty';
-        grid.appendChild(empty);
+        const e = document.createElement('div');
+        e.className = 'day-cell empty';
+        grid.appendChild(e);
     }
 
-    // Actual Days
-    for (let day = 1; day <= daysInMonth; day++) {
-        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    // Days
+    for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         const dayCell = document.createElement('div');
         dayCell.className = 'day-cell';
 
-        const dayLogs = state.logs[dateStr] || [];
-        const completionCount = dayLogs.length;
-        const totalHabits = state.habits.length;
+        let completedCount = 0;
+        state.habits.forEach(h => {
+            if (h.completedDates?.includes(dateStr)) completedCount++;
+        });
 
-        if (totalHabits > 0 && completionCount > 0) {
-            const intensity = completionCount / totalHabits;
+        if (state.habits.length > 0 && completedCount > 0) {
+            const intensity = completedCount / state.habits.length;
             dayCell.style.backgroundColor = `rgba(99, 102, 241, ${0.2 + (intensity * 0.8)})`;
-            dayCell.style.borderColor = 'var(--primary)';
         }
 
-        if (dateStr === state.today) {
-            dayCell.classList.add('today');
-        }
+        const today = new Date().toISOString().split('T')[0];
+        if (dateStr === today) dayCell.classList.add('today');
 
-        dayCell.innerHTML = `<span class="day-number">${day}</span>`;
-        if (completionCount > 0) {
+        dayCell.innerHTML = `<span class="day-number">${d}</span>`;
+        if (completedCount > 0) {
             dayCell.innerHTML += `<div class="dots-indicator" style="display:flex; gap:2px; justify-content:center; margin-top:2px;">
-                ${dayLogs.map(id => {
-                const h = state.habits.find(h => h.id === id);
-                return h ? `<span style="width:4px; height:4px; border-radius:50%; background-color:${h.color}; display:inline-block;"></span>` : '';
+                ${state.habits.map(h => {
+                return h.completedDates?.includes(dateStr) ?
+                    `<span style="width:4px; height:4px; border-radius:50%; background-color:${h.color}; display:inline-block;"></span>` : '';
             }).join('')}
             </div>`;
         }
 
         grid.appendChild(dayCell);
     }
-
     dom.mainContent.appendChild(grid);
 
-    // Event Listeners for controls
-    // Using simple approach since DOM is fresh
-    document.getElementById('prev-month').addEventListener('click', () => changeMonth(-1));
-    document.getElementById('next-month').addEventListener('click', () => changeMonth(1));
+    document.getElementById('prev-month').addEventListener('click', () => {
+        state.currentMonth.setMonth(state.currentMonth.getMonth() - 1);
+        render();
+    });
+    document.getElementById('next-month').addEventListener('click', () => {
+        state.currentMonth.setMonth(state.currentMonth.getMonth() + 1);
+        render();
+    });
 }
 
 function renderProgressView() {
-    const progressHeader = document.createElement('div');
-    progressHeader.className = 'view-header';
-    progressHeader.innerHTML = `
-        <h2>Tu Progreso</h2>
-        <p class="subtitle">Estadísticas Anuales</p>
-    `;
-    dom.mainContent.appendChild(progressHeader);
+    const ph = document.createElement('div');
+    ph.className = 'view-header';
+    ph.innerHTML = `<h2>Tu Progreso</h2><p class="subtitle">Estadísticas Anuales</p>`;
+    dom.mainContent.appendChild(ph);
 
     if (state.habits.length === 0) {
-        const emptyState = document.createElement('div');
-        emptyState.className = 'empty-state';
-        emptyState.innerHTML = '<p>Crea hábitos para ver estadísticas.</p>';
-        dom.mainContent.appendChild(emptyState);
+        dom.mainContent.innerHTML += `<div class="empty-state">No hay datos.</div>`;
         return;
     }
 
-    const statsContainer = document.createElement('div');
-    statsContainer.className = 'stats-container';
+    const container = document.createElement('div');
+    container.className = 'stats-container';
 
-    state.habits.forEach(habit => {
-        const streak = calculateStreak(habit.id);
+    state.habits.forEach(h => {
+        const streak = calculateStreak(h);
         const card = document.createElement('div');
         card.className = 'stat-card';
-        card.style.borderLeft = `4px solid ${habit.color}`;
+        card.style.borderLeft = `4px solid ${h.color}`;
         card.innerHTML = `
-            <h3>${habit.name}</h3>
-            <div class="stat-row">
-                <span>Racha actual:</span>
-                <strong>${streak} días 🔥</strong>
-            </div>
-            <div class="stat-row">
-                <span>Total completado:</span>
-                <strong>${countTotalCompletions(habit.id)} veces</strong>
-            </div>
+            <h3>${h.name}</h3>
+            <div class="stat-row"><span>Racha:</span><strong>${streak} días 🔥</strong></div>
+            <div class="stat-row"><span>Total:</span><strong>${h.completedDates?.length || 0} veces</strong></div>
         `;
-        statsContainer.appendChild(card);
+        container.appendChild(card);
     });
+    dom.mainContent.appendChild(container);
 
-    dom.mainContent.appendChild(statsContainer);
+    // Heatmap
+    const hmh = document.createElement('h3');
+    hmh.style.marginTop = '2rem';
+    hmh.textContent = `Actividad ${new Date().getFullYear()}`;
+    dom.mainContent.appendChild(hmh);
 
-    // Year Heatmap
-    const heatmapHeader = document.createElement('h3');
-    heatmapHeader.style.marginTop = '2rem';
-    heatmapHeader.textContent = `Mapa de Calor ${new Date().getFullYear()}`;
-    dom.mainContent.appendChild(heatmapHeader);
-
-    const scrollContainer = document.createElement('div');
-    scrollContainer.className = 'heatmap-scroll';
-
-    const heatmap = document.createElement('div');
-    heatmap.className = 'heatmap-grid';
+    const scroll = document.createElement('div');
+    scroll.className = 'heatmap-scroll';
+    const heat = document.createElement('div');
+    heat.className = 'heatmap-grid';
 
     const today = new Date();
-    // Render last 365 days
     for (let i = 0; i < 365; i++) {
         const d = new Date();
         d.setDate(today.getDate() - (364 - i));
         const dateStr = d.toISOString().split('T')[0];
 
+        let dailyCount = 0;
+        state.habits.forEach(h => {
+            if (h.completedDates?.includes(dateStr)) dailyCount++;
+        });
+
         const cell = document.createElement('div');
         cell.className = 'heatmap-cell';
-
-        const dayLogs = state.logs[dateStr] || [];
-        const intensity = Math.min(dayLogs.length, 4); // 0-4
-
-        if (dayLogs.length > 0) {
+        if (dailyCount > 0) {
+            const intensity = Math.min(dailyCount, 4);
             cell.dataset.level = intensity;
-            cell.title = `${dateStr}: ${dayLogs.length} hábitos`;
+            cell.title = `${dateStr}: ${dailyCount}`;
         } else {
-            cell.style.opacity = "0.1"; // Base style
+            cell.style.opacity = "0.1";
         }
-
-        heatmap.appendChild(cell);
+        heat.appendChild(cell);
     }
-
-    scrollContainer.appendChild(heatmap);
-    dom.mainContent.appendChild(scrollContainer);
+    scroll.appendChild(heat);
+    dom.mainContent.appendChild(scroll);
 }
 
-// --- Actions ---
+// --- Helpers ---
 
-function toggleHabit(habitId) {
-    if (!state.logs[state.today]) {
-        state.logs[state.today] = [];
-    }
-
-    const index = state.logs[state.today].indexOf(habitId);
-    if (index === -1) {
-        state.logs[state.today].push(habitId);
-        triggerConfetti();
-    } else {
-        state.logs[state.today].splice(index, 1);
-    }
-
-    saveState();
-    render();
-}
-
-function addHabit(name, color) {
-    console.log("Adding habit:", name, color);
-    const newHabit = {
-        id: Date.now().toString(),
-        name,
-        color,
-        createdAt: new Date().toISOString()
-    };
-    state.habits.push(newHabit);
-    saveState();
-    closeModal();
-    render();
-}
-
-function changeMonth(delta) {
-    if (!state.currentMonth) state.currentMonth = new Date();
-    state.currentMonth.setMonth(state.currentMonth.getMonth() + delta);
-    render();
-}
-
-function calculateStreak(habitId) {
+function calculateStreak(habit) {
     let streak = 0;
     const today = new Date();
 
+    // Check backwards 365 days
     for (let i = 0; i < 365; i++) {
         const d = new Date();
         d.setDate(today.getDate() - i);
         const dateStr = d.toISOString().split('T')[0];
 
-        // Allow missing today if it's not over yet? 
-        // Logic: if today is NOT done, start streak count from yesterday.
-        if (i === 0 && !state.logs[dateStr]?.includes(habitId)) {
-            continue;
-        }
+        // If today is NOT done, skip it (streak continues from yesterday)
+        if (i === 0 && !habit.completedDates?.includes(dateStr)) continue;
 
-        if (state.logs[dateStr]?.includes(habitId)) {
+        if (habit.completedDates?.includes(dateStr)) {
             streak++;
         } else {
             break;
@@ -360,77 +472,40 @@ function calculateStreak(habitId) {
     return streak;
 }
 
-function countTotalCompletions(habitId) {
-    let total = 0;
-    Object.values(state.logs).forEach(dayList => {
-        if (dayList.includes(habitId)) total++;
-    });
-    return total;
-}
+function switchView(v) { state.view = v; render(); }
+function triggerConfetti() { console.log("Confetti!"); }
 
-// --- Event Listeners ---
-
+// --- Listeners ---
 function setupEventListeners() {
-    dom.navBtns.forEach(btn => {
-        btn.addEventListener('click', () => switchView(btn.dataset.view));
+    dom.navBtns.forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+
+    dom.addHabitBtn?.addEventListener('click', () => {
+        if (!state.user) {
+            alert("Please login first");
+            return;
+        }
+        dom.modalOverlay.classList.remove('hidden');
     });
 
-    if (dom.addHabitBtn) {
-        dom.addHabitBtn.addEventListener('click', openModal);
-    }
-
-    if (dom.cancelModalBtn) {
-        dom.cancelModalBtn.addEventListener('click', closeModal);
-    }
-
-    if (dom.addHabitForm) {
-        dom.addHabitForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            console.log("Form submitted!");
-
-            const nameInput = document.getElementById('habit-name');
-            const name = nameInput.value;
-
-            const colorInput = document.querySelector('input[name="color"]:checked');
-            const color = colorInput ? colorInput.value : '#FF6B6B';
-
-            if (name) {
-                addHabit(name, color);
-            } else {
-                console.warn("Name is empty");
-            }
-        });
-    } else {
-        console.error("ADD HABIT FORM NOT FOUND IN SETUP");
-    }
-
-    // Close modal on outside click
-    if (dom.modalOverlay) {
-        dom.modalOverlay.addEventListener('click', (e) => {
-            if (e.target === dom.modalOverlay) closeModal();
-        });
-    }
-}
-
-function openModal() {
-    if (dom.modalOverlay) {
-        dom.modalOverlay.classList.remove('hidden');
-        setTimeout(() => {
-            const input = document.getElementById('habit-name');
-            if (input) input.focus();
-        }, 50);
-    }
-}
-
-function closeModal() {
-    if (dom.modalOverlay) {
+    dom.cancelModalBtn?.addEventListener('click', () => {
         dom.modalOverlay.classList.add('hidden');
-    }
-    if (dom.addHabitForm) {
         dom.addHabitForm.reset();
-    }
-}
+    });
 
-function triggerConfetti() {
-    console.log("Confetti!");
+    dom.addHabitForm?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = document.getElementById('habit-name').value;
+        const color = document.querySelector('input[name="color"]:checked')?.value || '#FF6B6B';
+        if (name) addHabit(name, color);
+    });
+
+    dom.modalOverlay?.addEventListener('click', (e) => {
+        if (e.target === dom.modalOverlay) {
+            dom.modalOverlay.classList.add('hidden');
+        }
+    });
+
+    dom.loginBtn?.addEventListener('click', login);
+    dom.logoutBtn?.addEventListener('click', logout);
+    dom.exportBtn?.addEventListener('click', exportData);
 }
