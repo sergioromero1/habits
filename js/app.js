@@ -546,6 +546,11 @@ function calculateStreak(habit) {
 function switchView(v) { state.view = v; render(); }
 function triggerConfetti() { console.log("Confetti!"); }
 
+function closeModal() {
+    dom.modalOverlay.classList.add('hidden');
+    dom.addHabitForm.reset();
+}
+
 // --- Listeners ---
 function setupEventListeners() {
     dom.navBtns.forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
@@ -558,10 +563,7 @@ function setupEventListeners() {
         dom.modalOverlay.classList.remove('hidden');
     });
 
-    dom.cancelModalBtn?.addEventListener('click', () => {
-        dom.modalOverlay.classList.add('hidden');
-        dom.addHabitForm.reset();
-    });
+    dom.cancelModalBtn?.addEventListener('click', closeModal);
 
     dom.addHabitForm?.addEventListener('submit', (e) => {
         e.preventDefault();
