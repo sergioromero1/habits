@@ -463,7 +463,7 @@ function renderProgressView() {
     // Heatmap
     const hmh = document.createElement('h3');
     hmh.style.marginTop = '2rem';
-    hmh.textContent = `Actividad ${new Date().getFullYear()}`;
+    hmh.textContent = `Actividad (Últimos 365 Días)`;
     dom.mainContent.appendChild(hmh);
 
     const scroll = document.createElement('div');
@@ -471,41 +471,53 @@ function renderProgressView() {
     const heat = document.createElement('div');
     heat.className = 'heatmap-grid';
 
-    // Calculate Heatmap based on Bogota dates relative to Today?
-    // Using standard JS date arithmetic is fine as long as we compare apples to apples (date strings)
-    const today = new Date();
-    // Getting the "Bogota Date" object is tricky without libs, but
-    // since we store date STRINGS (YYYY-MM-DD), we can just iterate back 365 days
-    // and check if those string keys exist.
+    // We want to generate 365 days ending Today.
+    // Order: Oldest -> Newest (Standard for vertical reading usually top-left to bottom-right?)
+    // Actually standard monthly calendar is L->R, Top->Bottom.
+    // Let's do that: Start 364 days ago, fill grid.
 
-    // We need to iterate 365 days back from TODAY (In Bogota).
-    // Let's assume the user's system time is somewhat correct for relative "days ago" logic,
-    // OR we specifically construct the date strings.
-
-    for (let i = 0; i < 365; i++) {
-        // Construct date string i days ago
+    for (let i = 364; i >= 0; i--) {
         const d = new Date();
-        d.setDate(d.getDate() - (364 - i));
-
-        // Format to YYYY-MM-DD
-        // Note: This 'd' is local time. Ideally we'd shift it.
-        // Simple fallback: ISO string split.
+        d.setDate(d.getDate() - i);
         const dateStr = d.toISOString().split('T')[0];
 
-        let dailyCount = 0;
+        // 1. Calculate Total Habits Active on that Day
+        // Naive assumption: Habit existed since its createdAt.
+        // If no createdAt (legacy), assume always existed? Or use dateStr comparison.
+        let activeHabitsCount = 0;
+        let completedCount = 0;
+
         state.habits.forEach(h => {
-            if (h.completedDates?.includes(dateStr)) dailyCount++;
+            // Check if habit existed on this date
+            const createdDateStr = (h.createdAt || '').split('T')[0];
+            // If we have createdAt, only count if dateStr >= createdDateStr
+            // If we don't, assume it existed.
+            if (!h.createdAt || dateStr >= createdDateStr) {
+                activeHabitsCount++;
+            }
+
+            if (h.completedDates?.includes(dateStr)) {
+                completedCount++;
+            }
         });
 
         const cell = document.createElement('div');
         cell.className = 'heatmap-cell';
-        if (dailyCount > 0) {
-            const intensity = Math.min(dailyCount, 4);
-            cell.dataset.level = intensity;
-            cell.title = `${dateStr}: ${dailyCount}`;
+        if (i === 0) cell.classList.add('today'); // Highlight Today
+
+        // Coloring Logic
+        if (activeHabitsCount > 0 && completedCount > 0) {
+            if (completedCount === activeHabitsCount) {
+                cell.setAttribute('data-status', 'all'); // Green
+                cell.title = `${dateStr}: ¡Todo completado! (${completedCount}/${activeHabitsCount})`;
+            } else {
+                cell.setAttribute('data-status', 'some'); // Purple
+                cell.title = `${dateStr}: Parcial (${completedCount}/${activeHabitsCount})`;
+            }
         } else {
-            cell.style.opacity = "0.1";
+            cell.title = `${dateStr}: Sin actividad`;
         }
+
         heat.appendChild(cell);
     }
     scroll.appendChild(heat);
