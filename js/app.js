@@ -476,10 +476,15 @@ function renderProgressView() {
     // Actually standard monthly calendar is L->R, Top->Bottom.
     // Let's do that: Start 364 days ago, fill grid.
 
+    const bogotaOptions = { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit' };
+    const formatter = new Intl.DateTimeFormat('en-CA', bogotaOptions); // en-CA gives YYYY-MM-DD format
+
     for (let i = 364; i >= 0; i--) {
         const d = new Date();
         d.setDate(d.getDate() - i);
-        const dateStr = d.toISOString().split('T')[0];
+
+        // Use the formatter to get the date string in Bogota time, matching the storage format
+        const dateStr = formatter.format(d);
 
         // 1. Calculate Total Habits Active on that Day
         // Naive assumption: Habit existed since its createdAt.
