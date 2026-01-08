@@ -19,13 +19,29 @@ const db = firebase.firestore();
 const auth = firebase.auth();
 const googleProvider = new firebase.auth.GoogleAuthProvider();
 
+// --- Timezone Helper (Bogota) ---
+function getBogotaDate() {
+    // Returns a Date object adjusted to Bogota time (UTC-5)
+    // Or simpler: returns the ISO string DATE part in Bogota time.
+    const now = new Date();
+    // locale: 'es-CO', timeZone: 'America/Bogota'
+    // Hacky but reliable way to get the YYYY-MM-DD string for Bogota
+    const options = { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit' };
+    const formatter = new Intl.DateTimeFormat('en-CA', options); // en-CA gives YYYY-MM-DD format
+    return formatter.format(now);
+}
+
+function getBogotaFullDate() {
+    return new Date().toLocaleDateString('es-CO', { timeZone: 'America/Bogota', weekday: 'long', day: 'numeric', month: 'long' });
+}
+
 // --- State Management ---
 let state = {
     user: null, // Firebase User
     view: 'daily',
     habits: [], // Now loaded from Firestore
-    currentMonth: new Date(),
-    unsubscribeHabits: null // Listener cleanup
+    currentMonth: new Date(), // This is for UI navigation, local time is fine for navigation usually, but let's stick to standard
+    unsubscribeHabits: null
 };
 
 // --- DOM Elements ---
@@ -61,36 +77,33 @@ function initApp() {
 
         if (user) {
             console.log("User logged in:", user.uid);
-            // Migrate local data if needed, then subscribe
             await migrateUserInfo();
             subscribeToHabits(user.uid);
         } else {
-            console.log("No user logged in. Using offline mode (incomplete implementation for purely offline, asking for login).");
-            // For now, clear habits if logged out
+            console.log("No user logged in.");
             state.habits = [];
             if (state.unsubscribeHabits) state.unsubscribeHabits();
-
-            // Optionally: Load localstorage as fallback?
-            // To keep simple: "Login to sync". Or fallback to local if desired.
-            // Let's fallback to local just so app isn't empty on load for guests.
             loadLocalHabits();
             render();
         }
     });
 }
 
-// --- Data Layer (Firebase + Local Fallback) ---
+// --- Data Layer ---
 
 function subscribeToHabits(uid) {
     if (state.unsubscribeHabits) state.unsubscribeHabits();
 
     const habitsRef = db.collection('users').doc(uid).collection('habits');
 
+    // Order by creation time if possible, or client side sort
     state.unsubscribeHabits = habitsRef.onSnapshot((snapshot) => {
         const habits = [];
         snapshot.forEach(doc => {
             habits.push({ id: doc.id, ...doc.data() });
         });
+        // Sort by createdAt
+        habits.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
         state.habits = habits;
         render();
     }, (error) => {
@@ -103,9 +116,7 @@ function loadLocalHabits() {
         const localHabits = JSON.parse(localStorage.getItem('habits')) || [];
         const localLogs = JSON.parse(localStorage.getItem('logs')) || {};
 
-        // Convert old structure to new unified structure for display compatibility
         state.habits = localHabits.map(h => {
-            // Find completion dates for this habit
             const completedDates = [];
             Object.keys(localLogs).forEach(date => {
                 if (localLogs[date].includes(h.id)) completedDates.push(date);
@@ -118,13 +129,11 @@ function loadLocalHabits() {
 }
 
 async function migrateUserInfo() {
-    // One-time check: If user has 0 habits in cloud, upload local habits
     const uid = state.user.uid;
     const habitsRef = db.collection('users').doc(uid).collection('habits');
     const snap = await habitsRef.get();
 
     if (snap.empty) {
-        console.log("New cloud user, checking local data...");
         const localHabits = JSON.parse(localStorage.getItem('habits')) || [];
         const localLogs = JSON.parse(localStorage.getItem('logs')) || {};
 
@@ -132,7 +141,7 @@ async function migrateUserInfo() {
             if (confirm("¡Tienes datos locales! ¿Quieres subirlos a tu cuenta?")) {
                 const batch = db.batch();
                 localHabits.forEach(h => {
-                    const docRef = habitsRef.doc(h.id); // Use same ID or new
+                    const docRef = habitsRef.doc(h.id);
                     const completedDates = [];
                     Object.keys(localLogs).forEach(date => {
                         if (localLogs[date].includes(h.id)) completedDates.push(date);
@@ -146,8 +155,6 @@ async function migrateUserInfo() {
                     });
                 });
                 await batch.commit();
-                console.log("Migration complete.");
-                // Optional: Clear local storage? localStorage.clear();
             }
         }
     }
@@ -158,10 +165,11 @@ async function migrateUserInfo() {
 async function toggleHabit(habit) {
     if (!state.user) {
         alert("Inicia sesión para guardar tu progreso en la nube.");
-        return; // Or handle local toggle
+        // We could implement local toggle here for guests, but sticking to cloud req for now
+        return;
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getBogotaDate(); // Bogota Time
     const isCompleted = habit.completedDates?.includes(today);
 
     const habitRef = db.collection('users').doc(state.user.uid).collection('habits').doc(habit.id);
@@ -201,6 +209,22 @@ async function addHabit(name, color) {
     }
 }
 
+async function deleteHabit(habitId) {
+    if (!confirm("¿Estás seguro de que quieres eliminar este hábito? Se perderá todo el historial.")) {
+        return;
+    }
+
+    if (!state.user) return; // Should be guarded by UI anyway
+
+    try {
+        await db.collection('users').doc(state.user.uid).collection('habits').doc(habitId).delete();
+        // UI updates automatically via snapshot listener
+    } catch (e) {
+        console.error("Error deleting habit:", e);
+        alert("Error al eliminar");
+    }
+}
+
 // --- Auth Actions ---
 
 function login() {
@@ -222,8 +246,7 @@ function exportData() {
 
     const dataStr = JSON.stringify(state.habits, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
-
-    const exportFileDefaultName = `habit-tracker-data-${new Date().toISOString().split('T')[0]}.json`;
+    const exportFileDefaultName = `habit-tracker-data-${getBogotaDate()}.json`;
 
     const linkElement = document.createElement('a');
     linkElement.setAttribute('href', dataUri);
@@ -264,8 +287,11 @@ function render() {
 function renderDailyView() {
     const header = document.createElement('div');
     header.className = 'view-header';
-    const todayStr = new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
-    header.innerHTML = `<h2>Hoy, ${todayStr}</h2><p class="subtitle">¡Sigue con tu racha!</p>`;
+    const bgDate = getBogotaFullDate();
+    // capitalize first letter
+    const bgDateCap = bgDate.charAt(0).toUpperCase() + bgDate.slice(1);
+
+    header.innerHTML = `<h2>Hoy, ${bgDateCap}</h2><p class="subtitle">¡Sigue con tu racha!</p>`;
     dom.mainContent.appendChild(header);
 
     const list = document.createElement('div');
@@ -274,21 +300,44 @@ function renderDailyView() {
     if (state.habits.length === 0) {
         list.innerHTML = `<div class="empty-state"><p>${state.user ? "¡Crea tu primer hábito!" : "Inicia sesión para ver tus hábitos"}</p></div>`;
     } else {
-        const today = new Date().toISOString().split('T')[0];
+        const today = getBogotaDate();
 
         state.habits.forEach(habit => {
             const isCompleted = habit.completedDates?.includes(today);
             const item = document.createElement('div');
             item.className = `habit-item ${isCompleted ? 'completed' : ''}`;
             item.style.setProperty('--habit-color', habit.color);
+
+            // Inner HTML structure with Delete Button
             item.innerHTML = `
-                <div class="habit-icon">${isCompleted ? '✓' : ''}</div>
-                <div class="habit-info">
-                    <span class="habit-name">${habit.name}</span>
-                    <span class="habit-streak">🔥 ${calculateStreak(habit)} días</span>
+                <div class="habit-content-wrapper">
+                    <div class="habit-icon">${isCompleted ? '✓' : ''}</div>
+                    <div class="habit-info">
+                        <span class="habit-name">${habit.name}</span>
+                        <span class="habit-streak">🔥 ${calculateStreak(habit)} días</span>
+                    </div>
                 </div>
+                <button class="delete-btn" aria-label="Eliminar Hábito">🗑️</button>
             `;
-            item.addEventListener('click', () => toggleHabit(habit));
+
+            // Click on ITEM toggles
+            // We need to make sure clicking delete doesn't toggle
+            const contentWrapper = item.querySelector('.habit-content-wrapper');
+            contentWrapper.addEventListener('click', (e) => {
+                // Prevent bubbling just in case, though structure separates them
+                e.stopPropagation();
+                toggleHabit(habit);
+            });
+
+            // Clicking outer item toggles too? Better UX: Only wrapper toggles.
+            // Or make Delete button float right and stop propagation.
+
+            const deleteBtn = item.querySelector('.delete-btn');
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation(); // Stop bubble to item click
+                deleteHabit(habit.id);
+            });
+
             list.appendChild(item);
         });
     }
@@ -305,7 +354,7 @@ function renderCalendarView() {
     const controls = document.createElement('div');
     controls.className = 'calendar-controls';
     const currentMonthDate = state.currentMonth;
-    const monthName = currentMonthDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+    const monthName = currentMonthDate.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
 
     controls.innerHTML = `
         <button id="prev-month">←</button>
@@ -326,7 +375,7 @@ function renderCalendarView() {
         grid.appendChild(h);
     });
 
-    // Days extraction
+    // Days usage logic similar to before but consistent date string usage
     const year = currentMonthDate.getFullYear();
     const month = currentMonthDate.getMonth();
     const firstDay = new Date(year, month, 1).getDay();
@@ -356,7 +405,7 @@ function renderCalendarView() {
             dayCell.style.backgroundColor = `rgba(99, 102, 241, ${0.2 + (intensity * 0.8)})`;
         }
 
-        const today = new Date().toISOString().split('T')[0];
+        const today = getBogotaDate(); // Use Bogota Today
         if (dateStr === today) dayCell.classList.add('today');
 
         dayCell.innerHTML = `<span class="day-number">${d}</span>`;
@@ -422,10 +471,25 @@ function renderProgressView() {
     const heat = document.createElement('div');
     heat.className = 'heatmap-grid';
 
+    // Calculate Heatmap based on Bogota dates relative to Today?
+    // Using standard JS date arithmetic is fine as long as we compare apples to apples (date strings)
     const today = new Date();
+    // Getting the "Bogota Date" object is tricky without libs, but
+    // since we store date STRINGS (YYYY-MM-DD), we can just iterate back 365 days
+    // and check if those string keys exist.
+
+    // We need to iterate 365 days back from TODAY (In Bogota).
+    // Let's assume the user's system time is somewhat correct for relative "days ago" logic,
+    // OR we specifically construct the date strings.
+
     for (let i = 0; i < 365; i++) {
+        // Construct date string i days ago
         const d = new Date();
-        d.setDate(today.getDate() - (364 - i));
+        d.setDate(d.getDate() - (364 - i));
+
+        // Format to YYYY-MM-DD
+        // Note: This 'd' is local time. Ideally we'd shift it.
+        // Simple fallback: ISO string split.
         const dateStr = d.toISOString().split('T')[0];
 
         let dailyCount = 0;
@@ -452,15 +516,22 @@ function renderProgressView() {
 
 function calculateStreak(habit) {
     let streak = 0;
-    const today = new Date();
+    // Current Bogota Date
+    const today = getBogotaDate();
 
-    // Check backwards 365 days
+    // Naively checking backwards from today
+    // We need a helper to subtract days from a YYYY-MM-DD string reliably
+    // Simplified: Parse today, subtract ms, reformat.
+
+    const current = new Date(today); // Parsed as UTC usually if YYYY-MM-DD
+    // Actually `new Date("2024-01-01")` is UTC. 
+
     for (let i = 0; i < 365; i++) {
-        const d = new Date();
-        d.setDate(today.getDate() - i);
+        const d = new Date(current);
+        d.setUTCDate(d.getUTCDate() - i); // Use UTC methods to avoid timezone shift on simple date objects
         const dateStr = d.toISOString().split('T')[0];
 
-        // If today is NOT done, skip it (streak continues from yesterday)
+        // Allow missing today if it's not over yet
         if (i === 0 && !habit.completedDates?.includes(dateStr)) continue;
 
         if (habit.completedDates?.includes(dateStr)) {
