@@ -302,6 +302,57 @@ button {
     color: var(--text-muted);
 }
 
+/* Pause / Activate Button */
+.pause-btn {
+    padding: 0 var(--space-md);
+    font-size: 1rem;
+    opacity: 0.5;
+    transition: all 0.2s;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.pause-btn:hover {
+    opacity: 1;
+    background-color: rgba(99, 102, 241, 0.15);
+}
+
+/* Paused habits section */
+.paused-section {
+    margin-top: var(--space-xl);
+}
+
+.paused-section summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-weight: 600;
+    user-select: none;
+}
+
+.paused-section .habit-list {
+    margin-top: var(--space-md);
+}
+
+.habit-item.paused {
+    opacity: 0.6;
+}
+
+.habit-item.paused:hover {
+    opacity: 0.9;
+}
+
+.habit-item.paused .habit-content-wrapper {
+    cursor: default;
+}
+
+.paused-badge {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
 /* --- Empty state --- */
 .empty-state {
     text-align: center;
@@ -403,6 +454,16 @@ button {
 .input-group input[type="text"]:focus {
     outline: none;
     border-color: var(--primary);
+}
+
+.input-group input[type="text"].invalid {
+    border-color: var(--danger);
+}
+
+.input-error {
+    color: var(--danger);
+    font-size: 0.85rem;
+    margin-top: var(--space-sm);
 }
 
 .color-picker {

@@ -41,7 +41,8 @@ let state = {
     view: 'daily',
     habits: [], // Now loaded from Firestore
     currentMonth: new Date(), // This is for UI navigation, local time is fine for navigation usually, but let's stick to standard
-    unsubscribeHabits: null
+    unsubscribeHabits: null,
+    pausedOpen: false // UI: "En pausa" section expanded
 };
 
 // --- DOM Elements ---
@@ -162,12 +163,13 @@ async function migrateUserInfo() {
 
 // --- Actions ---
 
-async function toggleHabit(habit) {
+async function toggleHabit(habit, sourceEl) {
     if (!state.user) {
         alert("Inicia sesión para guardar tu progreso en la nube.");
         // We could implement local toggle here for guests, but sticking to cloud req for now
         return;
     }
+    if (!isHabitActive(habit)) return; // Paused habits are not tracked
 
     const today = getBogotaDate(); // Bogota Time
     const isCompleted = habit.completedDates?.includes(today);
@@ -180,10 +182,14 @@ async function toggleHabit(habit) {
                 completedDates: firebase.firestore.FieldValue.arrayRemove(today)
             });
         } else {
+            // Was this the last pending active habit of the day?
+            const allDone = state.habits
+                .filter(h => isHabitActive(h) && h.id !== habit.id)
+                .every(h => h.completedDates?.includes(today));
+            triggerConfetti(sourceEl, allDone);
             await habitRef.update({
                 completedDates: firebase.firestore.FieldValue.arrayUnion(today)
             });
-            triggerConfetti();
         }
     } catch (e) {
         console.error("Error updating habit:", e);
@@ -196,16 +202,47 @@ async function addHabit(name, color) {
         return;
     }
 
+    name = name.trim().replace(/\s+/g, ' ');
+    const existing = findHabitByName(name);
+    if (existing) {
+        showNameError(isHabitActive(existing)
+            ? `Ya tienes un hábito llamado "${existing.name}".`
+            : `Ya tienes un hábito llamado "${existing.name}" (está en pausa). Puedes reactivarlo desde la lista.`);
+        return;
+    }
+
     try {
         await db.collection('users').doc(state.user.uid).collection('habits').add({
             name,
             color,
             createdAt: new Date().toISOString(),
-            completedDates: []
+            completedDates: [],
+            active: true,
+            activityLog: []
         });
         closeModal();
     } catch (e) {
         console.error("Error adding habit:", e);
+    }
+}
+
+// Move a habit between "active" (tracked daily) and "paused" (kept, not tracked).
+// activityLog records each change so past days keep their original goal count.
+async function setHabitActive(habit, active) {
+    if (!state.user) return;
+
+    const today = getBogotaDate();
+    const activityLog = (habit.activityLog || []).filter(e => e.date !== today);
+    activityLog.push({ date: today, active });
+
+    try {
+        await db.collection('users').doc(state.user.uid).collection('habits').doc(habit.id).update({
+            active,
+            activityLog
+        });
+    } catch (e) {
+        console.error("Error updating habit status:", e);
+        alert("Error al cambiar el estado del hábito");
     }
 }
 
@@ -294,54 +331,82 @@ function renderDailyView() {
     header.innerHTML = `<h2>Hoy, ${bgDateCap}</h2><p class="subtitle">¡Sigue con tu racha!</p>`;
     dom.mainContent.appendChild(header);
 
+    const today = getBogotaDate();
+    const activeHabits = state.habits.filter(isHabitActive);
+    const pausedHabits = state.habits.filter(h => !isHabitActive(h));
+
+    if (activeHabits.length > 0) {
+        const done = activeHabits.filter(h => h.completedDates?.includes(today)).length;
+        header.querySelector('.subtitle').textContent = done === activeHabits.length
+            ? `¡Día completo! ${done}/${activeHabits.length} 🎉`
+            : `¡Sigue con tu racha! ${done}/${activeHabits.length} completados`;
+    }
+
     const list = document.createElement('div');
     list.className = 'habit-list';
 
     if (state.habits.length === 0) {
         list.innerHTML = `<div class="empty-state"><p>${state.user ? "¡Crea tu primer hábito!" : "Inicia sesión para ver tus hábitos"}</p></div>`;
+    } else if (activeHabits.length === 0) {
+        list.innerHTML = `<div class="empty-state"><p>No tienes hábitos activos. Activa alguno de la lista de pausados.</p></div>`;
     } else {
-        const today = getBogotaDate();
-
-        state.habits.forEach(habit => {
-            const isCompleted = habit.completedDates?.includes(today);
-            const item = document.createElement('div');
-            item.className = `habit-item ${isCompleted ? 'completed' : ''}`;
-            item.style.setProperty('--habit-color', habit.color);
-
-            // Inner HTML structure with Delete Button
-            item.innerHTML = `
-                <div class="habit-content-wrapper">
-                    <div class="habit-icon">${isCompleted ? '✓' : ''}</div>
-                    <div class="habit-info">
-                        <span class="habit-name">${habit.name}</span>
-                        <span class="habit-streak">🔥 ${calculateStreak(habit)} días</span>
-                    </div>
-                </div>
-                <button class="delete-btn" aria-label="Eliminar Hábito">🗑️</button>
-            `;
-
-            // Click on ITEM toggles
-            // We need to make sure clicking delete doesn't toggle
-            const contentWrapper = item.querySelector('.habit-content-wrapper');
-            contentWrapper.addEventListener('click', (e) => {
-                // Prevent bubbling just in case, though structure separates them
-                e.stopPropagation();
-                toggleHabit(habit);
-            });
-
-            // Clicking outer item toggles too? Better UX: Only wrapper toggles.
-            // Or make Delete button float right and stop propagation.
-
-            const deleteBtn = item.querySelector('.delete-btn');
-            deleteBtn.addEventListener('click', (e) => {
-                e.stopPropagation(); // Stop bubble to item click
-                deleteHabit(habit.id);
-            });
-
-            list.appendChild(item);
-        });
+        activeHabits.forEach(habit => list.appendChild(createHabitItem(habit, today)));
     }
     dom.mainContent.appendChild(list);
+
+    if (pausedHabits.length > 0) {
+        const section = document.createElement('details');
+        section.className = 'paused-section';
+        section.open = state.pausedOpen;
+        section.addEventListener('toggle', () => { state.pausedOpen = section.open; });
+        section.innerHTML = `<summary>En pausa (${pausedHabits.length})</summary>`;
+
+        const pausedList = document.createElement('div');
+        pausedList.className = 'habit-list';
+        pausedHabits.forEach(habit => pausedList.appendChild(createHabitItem(habit, today)));
+        section.appendChild(pausedList);
+        dom.mainContent.appendChild(section);
+    }
+}
+
+function createHabitItem(habit, today) {
+    const active = isHabitActive(habit);
+    const isCompleted = active && habit.completedDates?.includes(today);
+    const item = document.createElement('div');
+    item.className = `habit-item ${isCompleted ? 'completed' : ''} ${active ? '' : 'paused'}`;
+    item.style.setProperty('--habit-color', habit.color);
+
+    // Inner HTML structure with Pause/Activate and Delete Buttons
+    item.innerHTML = `
+        <div class="habit-content-wrapper">
+            <div class="habit-icon">${isCompleted ? '✓' : ''}</div>
+            <div class="habit-info">
+                <span class="habit-name"></span>
+                <span class="habit-streak">🔥 ${calculateStreak(habit)} días · ${habit.completedDates?.length || 0} en total</span>
+            </div>
+        </div>
+        <button class="pause-btn" aria-label="${active ? 'Pausar' : 'Activar'} Hábito" title="${active ? 'Pausar (deja de contar en el día)' : 'Activar (vuelve a seguirlo)'}">${active ? '⏸️' : '▶️'}</button>
+        <button class="delete-btn" aria-label="Eliminar Hábito">🗑️</button>
+    `;
+    item.querySelector('.habit-name').textContent = habit.name;
+
+    // Only the content wrapper toggles; buttons stop propagation
+    item.querySelector('.habit-content-wrapper').addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleHabit(habit, item.querySelector('.habit-icon'));
+    });
+
+    item.querySelector('.pause-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        setHabitActive(habit, !active);
+    });
+
+    item.querySelector('.delete-btn').addEventListener('click', (e) => {
+        e.stopPropagation(); // Stop bubble to item click
+        deleteHabit(habit.id);
+    });
+
+    return item;
 }
 
 function renderCalendarView() {
@@ -400,8 +465,12 @@ function renderCalendarView() {
             if (h.completedDates?.includes(dateStr)) completedCount++;
         });
 
-        if (state.habits.length > 0 && completedCount > 0) {
-            const intensity = completedCount / state.habits.length;
+        // Intensity is relative to the habits that were active that day
+        const activeOnDay = state.habits.filter(h => isHabitActiveOn(h, dateStr));
+        const activeCompleted = activeOnDay.filter(h => h.completedDates?.includes(dateStr)).length;
+
+        if (activeOnDay.length > 0 && completedCount > 0) {
+            const intensity = Math.min(1, activeCompleted / activeOnDay.length);
             dayCell.style.backgroundColor = `rgba(99, 102, 241, ${0.2 + (intensity * 0.8)})`;
         }
 
@@ -452,7 +521,7 @@ function renderProgressView() {
         card.className = 'stat-card';
         card.style.borderLeft = `4px solid ${h.color}`;
         card.innerHTML = `
-            <h3>${h.name}</h3>
+            <h3>${escapeHtml(h.name)}${isHabitActive(h) ? '' : ' <span class="paused-badge">(en pausa)</span>'}</h3>
             <div class="stat-row"><span>Racha:</span><strong>${streak} días 🔥</strong></div>
             <div class="stat-row"><span>Total:</span><strong>${h.completedDates?.length || 0} veces</strong></div>
         `;
@@ -493,13 +562,9 @@ function renderProgressView() {
         let completedCount = 0;
 
         state.habits.forEach(h => {
-            // Check if habit existed on this date
-            const createdDateStr = (h.createdAt || '').split('T')[0];
-            // If we have createdAt, only count if dateStr >= createdDateStr
-            // If we don't, assume it existed.
-            if (!h.createdAt || dateStr >= createdDateStr) {
-                activeHabitsCount++;
-            }
+            // Only habits that existed and were active (not paused) on this date count
+            if (!isHabitActiveOn(h, dateStr)) return;
+            activeHabitsCount++;
 
             if (h.completedDates?.includes(dateStr)) {
                 completedCount++;
@@ -560,12 +625,86 @@ function calculateStreak(habit) {
     return streak;
 }
 
+// Habits without the `active` field (created before this feature) are active
+function isHabitActive(habit) {
+    return habit.active !== false;
+}
+
+// Was the habit being tracked on a given YYYY-MM-DD date?
+function isHabitActiveOn(habit, dateStr) {
+    const createdDateStr = (habit.createdAt || '').split('T')[0];
+    if (habit.createdAt && dateStr < createdDateStr) return false;
+
+    // Last status change on or before that date decides
+    let active = true;
+    (habit.activityLog || [])
+        .slice()
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .forEach(e => { if (e.date <= dateStr) active = e.active; });
+    return active;
+}
+
+// Case, accent and whitespace insensitive: "Leer", " leer ", "LÉER" are the same habit
+function normalizeHabitName(name) {
+    return name.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function findHabitByName(name) {
+    const target = normalizeHabitName(name);
+    return state.habits.find(h => normalizeHabitName(h.name || '') === target);
+}
+
+function showNameError(message) {
+    const input = document.getElementById('habit-name');
+    const error = document.getElementById('habit-name-error');
+    input.classList.add('invalid');
+    error.textContent = message;
+    error.classList.remove('hidden');
+    input.focus();
+}
+
+function clearNameError() {
+    document.getElementById('habit-name').classList.remove('invalid');
+    document.getElementById('habit-name-error').classList.add('hidden');
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
 function switchView(v) { state.view = v; render(); }
-function triggerConfetti() { console.log("Confetti!"); }
+
+function triggerConfetti(sourceEl, allDone = false) {
+    if (typeof confetti !== 'function') return; // CDN not loaded
+
+    // Burst from the habit's check icon
+    let origin = { x: 0.5, y: 0.5 };
+    if (sourceEl) {
+        const rect = sourceEl.getBoundingClientRect();
+        origin = {
+            x: (rect.left + rect.width / 2) / window.innerWidth,
+            y: (rect.top + rect.height / 2) / window.innerHeight
+        };
+    }
+    confetti({ particleCount: 60, spread: 70, startVelocity: 30, origin, scalar: 0.9 });
+
+    // Bigger celebration when every active habit of the day is done
+    if (allDone) {
+        const end = Date.now() + 1200;
+        (function frame() {
+            confetti({ particleCount: 6, angle: 60, spread: 55, origin: { x: 0, y: 0.7 } });
+            confetti({ particleCount: 6, angle: 120, spread: 55, origin: { x: 1, y: 0.7 } });
+            if (Date.now() < end) requestAnimationFrame(frame);
+        })();
+    }
+}
 
 function closeModal() {
     dom.modalOverlay.classList.add('hidden');
     dom.addHabitForm.reset();
+    clearNameError();
 }
 
 // --- Listeners ---
@@ -586,7 +725,14 @@ function setupEventListeners() {
         e.preventDefault();
         const name = document.getElementById('habit-name').value;
         const color = document.querySelector('input[name="color"]:checked')?.value || '#FF6B6B';
-        if (name) addHabit(name, color);
+        if (name.trim()) addHabit(name, color);
+    });
+
+    // Warn about duplicates while typing, clear the error once the name is unique
+    document.getElementById('habit-name')?.addEventListener('input', (e) => {
+        const existing = e.target.value.trim() && findHabitByName(e.target.value);
+        if (existing) showNameError(`Ya tienes un hábito llamado "${existing.name}"${isHabitActive(existing) ? '' : ' (está en pausa)'}.`);
+        else clearNameError();
     });
 
     dom.modalOverlay?.addEventListener('click', (e) => {
