@@ -42,7 +42,8 @@ let state = {
     habits: [], // Now loaded from Firestore
     currentMonth: new Date(), // This is for UI navigation, local time is fine for navigation usually, but let's stick to standard
     unsubscribeHabits: null,
-    pausedOpen: false // UI: "En pausa" section expanded
+    pausedOpen: false, // UI: "En pausa" section expanded
+    habitToDelete: null // Habit shown in the delete confirmation modal
 };
 
 // --- DOM Elements ---
@@ -67,6 +68,7 @@ function initApp() {
         userAvatar: document.getElementById('user-avatar'),
         logoutBtn: document.getElementById('logout-btn'),
         exportBtn: document.getElementById('export-btn'),
+        deleteModalOverlay: document.getElementById('delete-modal-overlay'),
     };
 
     setupEventListeners();
@@ -246,11 +248,34 @@ async function setHabitActive(habit, active) {
     }
 }
 
-async function deleteHabit(habitId) {
-    if (!confirm("¿Estás seguro de que quieres eliminar este hábito? Se perderá todo el historial.")) {
-        return;
-    }
+// Confirmation screen: the user must type the habit name to enable "Eliminar"
+function openDeleteModal(habit) {
+    state.habitToDelete = habit;
+    const total = habit.completedDates?.length || 0;
+    const streak = calculateStreak(habit);
 
+    document.getElementById('delete-habit-name').textContent = habit.name;
+    document.getElementById('delete-habit-name-hint').textContent = habit.name;
+    document.getElementById('delete-habit-stats').textContent =
+        `${total} ${total === 1 ? 'día completado' : 'días completados'}, racha de ${streak} ${streak === 1 ? 'día' : 'días'}`;
+    // Pausing is only offered for active habits
+    document.getElementById('delete-pause-hint').classList.toggle('hidden', !isHabitActive(habit));
+
+    const input = document.getElementById('delete-confirm-input');
+    input.value = '';
+    input.placeholder = habit.name;
+    document.getElementById('confirm-delete').disabled = true;
+
+    dom.deleteModalOverlay.classList.remove('hidden');
+    input.focus();
+}
+
+function closeDeleteModal() {
+    dom.deleteModalOverlay.classList.add('hidden');
+    state.habitToDelete = null;
+}
+
+async function deleteHabit(habitId) {
     if (!state.user) return; // Should be guarded by UI anyway
 
     try {
@@ -403,7 +428,7 @@ function createHabitItem(habit, today) {
 
     item.querySelector('.delete-btn').addEventListener('click', (e) => {
         e.stopPropagation(); // Stop bubble to item click
-        deleteHabit(habit.id);
+        openDeleteModal(habit);
     });
 
     return item;
@@ -739,6 +764,40 @@ function setupEventListeners() {
         if (e.target === dom.modalOverlay) {
             dom.modalOverlay.classList.add('hidden');
         }
+    });
+
+    // Delete confirmation
+    const deleteInput = document.getElementById('delete-confirm-input');
+    const confirmDeleteBtn = document.getElementById('confirm-delete');
+
+    deleteInput?.addEventListener('input', () => {
+        const habit = state.habitToDelete;
+        confirmDeleteBtn.disabled = !habit ||
+            normalizeHabitName(deleteInput.value) !== normalizeHabitName(habit.name);
+    });
+
+    document.getElementById('delete-habit-form')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const habit = state.habitToDelete;
+        if (!habit || confirmDeleteBtn.disabled) return;
+        closeDeleteModal();
+        deleteHabit(habit.id);
+    });
+
+    document.getElementById('delete-pause-btn')?.addEventListener('click', () => {
+        const habit = state.habitToDelete;
+        closeDeleteModal();
+        if (habit) setHabitActive(habit, false);
+    });
+
+    document.getElementById('cancel-delete')?.addEventListener('click', closeDeleteModal);
+
+    // Clicking outside or pressing Escape cancels
+    dom.deleteModalOverlay?.addEventListener('click', (e) => {
+        if (e.target === dom.deleteModalOverlay) closeDeleteModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !dom.deleteModalOverlay.classList.contains('hidden')) closeDeleteModal();
     });
 
     dom.loginBtn?.addEventListener('click', login);

@@ -396,7 +396,8 @@ button {
     display: none !important;
 }
 
-#modal-overlay {
+#modal-overlay,
+#delete-modal-overlay {
     position: fixed;
     top: 0;
     left: 0;
@@ -520,6 +521,56 @@ button {
 
 .btn-text:hover {
     color: white;
+}
+
+.btn-danger {
+    background-color: var(--danger);
+    color: white;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    transition: background-color 0.2s, opacity 0.2s;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background-color: #dc2626;
+}
+
+.btn-danger:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+/* Delete confirmation modal */
+.delete-modal h2 {
+    color: var(--danger);
+}
+
+.delete-warning {
+    background-color: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    margin-bottom: var(--space-lg);
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+.delete-warning strong {
+    color: var(--text-main);
+}
+
+.delete-pause-hint {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-top: var(--space-sm);
+}
+
+.delete-pause-hint button {
+    color: var(--primary);
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
 }
 
 /* Animations */

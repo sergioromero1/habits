@@ -109,6 +109,30 @@
         </div>
     </div>
 
+    <div id="delete-modal-overlay" class="hidden">
+        <div class="modal delete-modal" role="alertdialog" aria-labelledby="delete-modal-title">
+            <h2 id="delete-modal-title">Eliminar hábito</h2>
+            <div class="delete-warning">
+                Vas a eliminar <strong id="delete-habit-name"></strong> y todo su historial
+                (<span id="delete-habit-stats"></span>). <strong>Esta acción no se puede deshacer.</strong>
+                <p id="delete-pause-hint" class="delete-pause-hint">
+                    ¿Solo quieres dejar de seguirlo por ahora?
+                    <button type="button" id="delete-pause-btn">Pausarlo en su lugar</button>
+                </p>
+            </div>
+            <form id="delete-habit-form">
+                <div class="input-group">
+                    <label for="delete-confirm-input">Escribe <strong id="delete-habit-name-hint"></strong> para confirmar</label>
+                    <input type="text" id="delete-confirm-input" autocomplete="off">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-text" id="cancel-delete">Cancelar</button>
+                    <button type="submit" class="btn-danger" id="confirm-delete" disabled>Eliminar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script src="js/app.js"></script>
 </body>
 
