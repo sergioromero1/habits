@@ -73,33 +73,9 @@
                     <p id="habit-name-error" class="input-error hidden"></p>
                 </div>
                 <div class="input-group">
-                    <label for="habit-color">Color</label>
-                    <div class="color-picker">
-                        <!-- Extended Palette -->
-                        <input type="radio" name="color" value="#FF6B6B" id="color-1" checked>
-                        <label for="color-1" style="--bg: #FF6B6B" title="Red"></label>
-
-                        <input type="radio" name="color" value="#4ECDC4" id="color-2">
-                        <label for="color-2" style="--bg: #4ECDC4" title="Teal"></label>
-
-                        <input type="radio" name="color" value="#FFE66D" id="color-3">
-                        <label for="color-3" style="--bg: #FFE66D" title="Yellow"></label>
-
-                        <input type="radio" name="color" value="#1A535C" id="color-4">
-                        <label for="color-4" style="--bg: #1A535C" title="Navy"></label>
-
-                        <input type="radio" name="color" value="#F9844A" id="color-5">
-                        <label for="color-5" style="--bg: #F9844A" title="Orange"></label>
-
-                        <input type="radio" name="color" value="#9D4EDD" id="color-6">
-                        <label for="color-6" style="--bg: #9D4EDD" title="Purple"></label>
-
-                        <input type="radio" name="color" value="#FF006E" id="color-7">
-                        <label for="color-7" style="--bg: #FF006E" title="Pink"></label>
-
-                        <input type="radio" name="color" value="#3A86FF" id="color-8">
-                        <label for="color-8" style="--bg: #3A86FF" title="Blue"></label>
-                    </div>
+                    <label>Color</label>
+                    <!-- Swatches are generated from HABIT_COLORS in app.js -->
+                    <div class="color-picker" id="color-picker"></div>
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="btn-text" id="cancel-modal">Cancelar</button>

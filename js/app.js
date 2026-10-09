@@ -35,6 +35,34 @@ function getBogotaFullDate() {
     return new Date().toLocaleDateString('es-CO', { timeZone: 'America/Bogota', weekday: 'long', day: 'numeric', month: 'long' });
 }
 
+// --- Habit Colors (ordered by hue) ---
+const HABIT_COLORS = [
+    { value: '#FF6B6B', name: 'Coral' },
+    { value: '#E63946', name: 'Rojo' },
+    { value: '#FF8FAB', name: 'Rosa claro' },
+    { value: '#FF006E', name: 'Rosa' },
+    { value: '#F72585', name: 'Fucsia' },
+    { value: '#B5179E', name: 'Magenta' },
+    { value: '#C77DFF', name: 'Lavanda' },
+    { value: '#9D4EDD', name: 'Morado' },
+    { value: '#7209B7', name: 'Violeta' },
+    { value: '#4361EE', name: 'Índigo' },
+    { value: '#3A86FF', name: 'Azul' },
+    { value: '#4CC9F0', name: 'Celeste' },
+    { value: '#4ECDC4', name: 'Turquesa' },
+    { value: '#2A9D8F', name: 'Verde azulado' },
+    { value: '#1A535C', name: 'Petróleo' },
+    { value: '#06D6A0', name: 'Menta' },
+    { value: '#43AA8B', name: 'Verde' },
+    { value: '#90BE6D', name: 'Verde lima' },
+    { value: '#FFE66D', name: 'Amarillo' },
+    { value: '#FFB703', name: 'Ámbar' },
+    { value: '#FB8500', name: 'Naranja' },
+    { value: '#F9844A', name: 'Mandarina' },
+    { value: '#A0522D', name: 'Marrón' },
+    { value: '#8D99AE', name: 'Gris' }
+];
+
 // --- State Management ---
 let state = {
     user: null, // Firebase User
@@ -71,6 +99,7 @@ function initApp() {
         deleteModalOverlay: document.getElementById('delete-modal-overlay'),
     };
 
+    renderColorPicker();
     setupEventListeners();
 
     // Auth Listener
@@ -726,9 +755,43 @@ function triggerConfetti(sourceEl, allDone = false) {
     }
 }
 
+function renderColorPicker() {
+    const picker = document.getElementById('color-picker');
+
+    HABIT_COLORS.forEach((color, i) => {
+        const id = `color-${i + 1}`;
+        picker.insertAdjacentHTML('beforeend', `
+            <input type="radio" name="color" value="${color.value}" id="${id}" ${i === 0 ? 'checked' : ''}>
+            <label for="${id}" style="--bg: ${color.value}" title="${color.name}"></label>
+        `);
+    });
+
+    // Custom color: native picker hidden over a rainbow swatch
+    picker.insertAdjacentHTML('beforeend', `
+        <input type="radio" name="color" value="#FFFFFF" id="color-custom">
+        <label for="color-custom" class="custom-color" title="Color personalizado">
+            <input type="color" id="custom-color-input" value="#FFFFFF" aria-label="Color personalizado">
+        </label>
+    `);
+
+    const customRadio = document.getElementById('color-custom');
+    const customInput = document.getElementById('custom-color-input');
+    const customLabel = picker.querySelector('.custom-color');
+
+    const useCustomColor = () => {
+        customRadio.value = customInput.value;
+        customRadio.checked = true;
+        customLabel.style.setProperty('--bg', customInput.value);
+        customLabel.classList.add('picked');
+    };
+    customInput.addEventListener('click', useCustomColor);
+    customInput.addEventListener('input', useCustomColor);
+}
+
 function closeModal() {
     dom.modalOverlay.classList.add('hidden');
     dom.addHabitForm.reset();
+    document.querySelector('#color-picker .custom-color')?.classList.remove('picked');
     clearNameError();
 }
 
