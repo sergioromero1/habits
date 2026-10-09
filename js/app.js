@@ -647,6 +647,15 @@ function renderProgressView() {
     }
     scroll.appendChild(heat);
     dom.mainContent.appendChild(scroll);
+
+    const legend = document.createElement('div');
+    legend.className = 'heatmap-legend';
+    legend.innerHTML = `
+        <span><i class="heatmap-cell"></i>Sin actividad</span>
+        <span><i class="heatmap-cell" data-status="some"></i>Algunos</span>
+        <span><i class="heatmap-cell" data-status="all"></i>Todos</span>
+    `;
+    dom.mainContent.appendChild(legend);
 }
 
 // --- Helpers ---

@@ -751,19 +751,55 @@ button {
     transform: scale(1.1);
 }
 
-/* Partial completion: Purple */
+/* Partial completion: Green */
 .heatmap-cell[data-status="some"] {
-    background-color: #a855f7;
-    /* Purple-500 */
+    background-color: #22c55e;
+    /* Green-500 */
     opacity: 0.8;
 }
 
-/* Full completion: Green */
+/* Full completion: Gold + trophy */
 .heatmap-cell[data-status="all"] {
-    background-color: #22c55e;
-    /* Green-500 */
-    opacity: 1.0;
-    box-shadow: 0 0 4px #22c55e;
+    background-color: #f59e0b;
+    /* Amber-500 */
+    box-shadow: 0 0 6px #fbbf24;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    line-height: 1;
+}
+
+.heatmap-cell[data-status="all"]::after {
+    content: "🏆";
+    filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.4));
+}
+
+/* Heatmap legend */
+.heatmap-legend {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: var(--space-sm);
+}
+
+.heatmap-legend span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.heatmap-legend .heatmap-cell {
+    width: 16px;
+    font-size: 0.55rem;
+}
+
+.heatmap-legend .heatmap-cell:hover {
+    transform: none;
+    border-color: transparent;
 }
 
 /* Optional: simple hover for tooltip info */
