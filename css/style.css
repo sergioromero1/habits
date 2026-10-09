@@ -283,7 +283,7 @@ button {
 
 .habit-item.completed .habit-icon {
     background-color: var(--habit-color);
-    color: white;
+    color: var(--habit-on-color, white);
     box-shadow: 0 0 15px var(--habit-color);
 }
 

@@ -429,6 +429,7 @@ function createHabitItem(habit, today) {
     const item = document.createElement('div');
     item.className = `habit-item ${isCompleted ? 'completed' : ''} ${active ? '' : 'paused'}`;
     item.style.setProperty('--habit-color', habit.color);
+    item.style.setProperty('--habit-on-color', isLightColor(habit.color) ? '#0f172a' : 'white');
 
     // Inner HTML structure with Pause/Activate and Delete Buttons
     item.innerHTML = `
@@ -720,6 +721,21 @@ function showNameError(message) {
 function clearNameError() {
     document.getElementById('habit-name').classList.remove('invalid');
     document.getElementById('habit-name-error').classList.add('hidden');
+}
+
+// Light backgrounds (yellow, mint, custom pastels...) need a dark check mark to be readable
+function isLightColor(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    if (!m) return false;
+    const n = parseInt(m[1], 16);
+    const [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255].map(c => {
+        c /= 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    // Relative luminance (WCAG). Threshold is above the strict 0.179 midpoint so
+    // only clearly light colors switch, keeping the white check on mid tones
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    return luminance > 0.45;
 }
 
 function escapeHtml(str) {
